@@ -95,8 +95,8 @@ pointMap <- ggplot()+
   # geom_sf_text(data = inBoundsEQ[inBoundsEQ$mag==max(inBoundsEQ$mag),], # or just the absolute max: inBoundsEQ$mag==max(inBoundsEQ$mag); originally all maxes: inBoundsEQ[inBoundsEQ$stateMax==1,]
   #              aes(label = mag, face = "bold"),
   #              color = RED1, vjust = -1.5, hjust = -1)+
-  labs(caption = "Source | USGS Earthquakes Catalog\nTimothy Oliver",
-       title = "2023 - Year of Minor Intensity Earthquakes",
+  labs(caption = "Note: earthquakes of magnitude 2.5 or greater shown\n\nSource | USGS Earthquakes Catalog\nTimothy Oliver",
+       title = "2023 - A Year of Minor Intensity Earthquakes",
        subtitle= "<span style='font-size:11pt'>Highest Recorded at
        <span style='color:#FA5128;'>5.48</span> in 
        <span style='color:#FA5128;'>California</span>")+
