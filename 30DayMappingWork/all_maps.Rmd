@@ -1,0 +1,191 @@
+---
+title: "bigKahuna - all the maps in the challenge"
+author: "Timothy Oliver"
+date: "2023-10-31"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r please}
+library(tidycensus)
+library(tidyverse)
+library(scales)
+library(tmap)
+library(sf)
+library(mapsf)
+library(socviz)
+## gg-suite
+library(ggplot2)
+library(ggbeeswarm)
+library(ggiraph)
+library(ggtext)
+library(ggspatial)
+library(ggmap)
+
+## google api key for ggmap
+# ggmap::register_google(key=)
+
+source("D:/timol/Grad_School/plotTheme_TO.R")
+
+options(scipen = 999)
+```
+
+
+```{r get_areas,results='hide'}
+
+us_area <- get_decennial(
+  geography = "state",
+  year = 2010,
+  variables = "P001001",
+  geometry = T) %>% st_transform("EPSG:3665") 
+
+cont_us_area <- us_area %>%
+  filter(NAME != "Alaska" & NAME != "Hawaii" & NAME != "Puerto Rico")
+
+
+```
+
+
+# 1	Points	A map with points
+
+```{r data_prep, results='hide'}
+## earthquakes to hurricanes?
+# from usgs earthquake database
+earthquakes_23 <- st_read("data/2023_US_earthquakes.json") %>% st_transform(st_crs(us_area))
+
+inBoundsEQ <- st_join(earthquakes_23, cont_us_area, join=st_within)[cont_us_area,]
+# ensure only points in continental us
+
+# View(inBoundsEQ %>% group_by(NAME))
+test <- inBoundsEQ %>% group_by(NAME) %>% summarize(stateMaxMag = max(mag),
+                                                    stateMinMag = min(mag))
+
+inBoundsEQ <- st_join(x=inBoundsEQ,y=test)
+inBoundsEQ <- inBoundsEQ %>% mutate(stateMax =ifelse(mag==stateMaxMag,1,0),
+                                 stateMin = ifelse(mag==stateMinMag,1,0),
+                                 tooltip = paste(paste("Maximum",NAME.x,"Magnitude"), mag, sep = ": "),
+                                 color = ifelse(mag==max(inBoundsEQ$mag),RED2,RED1))
+# magMax <- max(inBoundsEQ$mag)
+```
+
+
+```{r points}
+
+pointMap <- ggplot()+
+  # annotation_map_tile(type="loviniacycle",data=cont_us_area)+ # adds annotation, but lose projection without data
+  # ggmap(get_map(maptype = 'terrain-background', source = 'stamen')) # needs api key
+  geom_sf(data = cont_us_area, fill = "lightgrey",col = "white")+
+  geom_sf(data = inBoundsEQ[inBoundsEQ$stateMin==0 & inBoundsEQ$stateMax==0,],
+          color=GRAY7)+
+  # geom_sf(data = inBoundsEQ[inBoundsEQ$stateMin==1,],
+  #         color="yellow")+
+  geom_sf_interactive(data = inBoundsEQ[inBoundsEQ$stateMax==1,],
+                      color=RED1,
+                      aes(tooltip = tooltip))+
+  geom_sf_interactive(data = inBoundsEQ[inBoundsEQ$mag==max(inBoundsEQ$mag),],
+                      color="#FA5128",
+                      aes(tooltip = tooltip))+
+  # geom_sf_text(data = inBoundsEQ[inBoundsEQ$mag==max(inBoundsEQ$mag),], # or just the absolute max: inBoundsEQ$mag==max(inBoundsEQ$mag); originally all maxes: inBoundsEQ[inBoundsEQ$stateMax==1,]
+  #              aes(label = mag, face = "bold"),
+  #              color = RED1, vjust = -1.5, hjust = -1)+
+  labs(caption = "Source | USGS Earthquakes Catalog\nTimothy Oliver",
+       title = "2023 - Year of Minor Intensity Earthquakes",
+       subtitle= "<span style='font-size:11pt'>Highest Recorded at
+       <span style='color:#FA5128;'>5.48</span> in 
+       <span style='color:#FA5128;'>California</span>")+
+  theme_test()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA),
+        # allows html in labs
+        plot.subtitle = element_markdown(lineheight = 1.1,hjust = 0)
+        )
+
+girafe(ggobj = pointMap) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"), 
+                 opts_zoom(max = 10))
+
+## idea: highest and lowest magnitude earthquakes by state
+
+ggsave(filename="maps/StatesHighestMagnitudeEarthquakes_2023.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
+# 2	Lines	A map with lines
+
+```{r lines}
+
+```
+
+
+# 3	Polygons	A map with polygons
+
+# 4	A bad map	Let's get this over with
+
+# 5	Analog Map	Non-digital maps
+
+# 6	Asia	Largest of the continents
+
+# 7	Navigation	A map that helps you to navigate
+
+# 8	Africa	Second-largest and second-most populous continent
+
+# 9	Hexagons	6 sides, 6 angles, and 6 vertices
+
+# 10	North America	Northern part of the American continent
+
+# 11	Retro	A blast from the past
+
+# 12	South America	Southern part of the American continent
+
+# 13	Choropleth	Classic thematic map: a choropleth
+
+# 14	Europe	The westernmost peninsulas of Eurasia
+
+# 15	OpenStreetMap	The greatest of the datasets. Remember to give credit.
+
+# 16	Oceania	Region made up of thousands of islands throughout the Central and South Pacific
+
+# 17	Flow	Flow of transport, people
+
+# 18	Atmosphere	Conditions of the atmosphere can be either weather or climate
+
+# 19	5-minute map	Spend no more than 5 minutes to prepare this map
+
+# 20	Outdoors	Map of mountains, trails, or something completely different
+
+# 21	Raster	Pixels, please
+
+# 22	North is not always up	⬆️
+
+# 23	3D	The third dimension
+
+# 24	Black & white	Only two colors allowed
+
+# 25	Antarctica	A cold continent that can't be reached with Web Mercator
+
+# 26	Minimal	Less is more
+
+# 27	Dot	Dot density, a single dot in space or something different
+
+# 28	Is this a chart or a map?	In thematic maps, you can't always tell. Try to stretch the limits
+
+# 29	Population	A classic theme for a map
+
+# 30	"My favorite.."	You choose!
+
+```{r knit_etc., eval=F, include=F}
+rmarkdown::render(input="all_maps.Rmd",output_format = "html_document",output_file = "The Thirty-Day Mapping Journey.html")
+```
