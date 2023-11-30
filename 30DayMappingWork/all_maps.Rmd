@@ -10,7 +10,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,results='hide',message=F,warning=F)
 ```
 
 ```{r please}
@@ -19,8 +19,11 @@ library(tidyverse)
 library(scales)
 library(tmap)
 library(sf)
+library(sfheaders)
 library(mapsf)
 library(socviz)
+library(sp)
+library(gstat)
 ## gg-suite
 library(ggplot2)
 library(ggbeeswarm)
@@ -28,11 +31,14 @@ library(ggiraph)
 library(ggtext)
 library(ggspatial)
 library(ggmap)
+library(jsonlite)
+library(httr)
+library(osmdata)
 
 ## google api key for ggmap
 # ggmap::register_google(key=)
 
-source("D:/timol/Grad_School/plotTheme_TO.R")
+source("themes/plotTheme_TO.R")
 
 options(scipen = 999)
 ```
@@ -49,9 +55,95 @@ us_area <- get_decennial(
 cont_us_area <- us_area %>%
   filter(NAME != "Alaska" & NAME != "Hawaii" & NAME != "Puerto Rico")
 
+PA <- cont_us_area[cont_us_area$NAME=="Pennsylvania",]
+
+philly <- get_decennial(
+  geography = "tract",
+  state="PA",
+  county="Philadelphia",
+  year = 2010,
+  variables = "P001001",
+  geometry = T,
+  output="wide") %>% st_transform("EPSG:2272") 
+
+
+
 
 ```
 
+```{r data_test, results='hide'}
+birds <- st_read("data/birds_gps/gps/anon_gps_tracks_with_dive.csv",options=c("X_POSSIBLE_NAMES=x","Y_POSSIBLE_NAMES=y")) %>%
+  st_as_sf(., coords = c("lon", "lat"), crs = 4326)
+
+obesity <- st_read("data/National_Obesity_By_State-shp/National_Obesity_By_State.shp") %>% st_transform(st_crs(us_area))
+
+ocean <- st_read("data/ocean/ne_110m_ocean.shp") %>% st_transform(crs=4326)
+
+chile <- st_read("data/chl_adm_bcn_20211008_shp/chl_admbnda_adm0_bcn_20211008.shp")
+
+russia <- st_read("data/russia/bs331gg4381.shp")
+
+canada <- st_read("data/canada/gpr_000b11a_e.shp")
+
+waterway <- st_read("data/Navigable_Waterway_Network_Lines/Waterway_network.shp")
+
+dead_sea <- st_read("data/deadsea.csv",options=c("X_POSSIBLE_NAMES=x","Y_POSSIBLE_NAMES=y")) %>%
+  mutate(x = LON,y=LAT) %>%
+  st_as_sf(., coords = c("LON", "LAT"), crs = 4326) %>% mutate(elev = 0-as.numeric(DEPTH))
+
+deadSea <- read_csv("data/deadsea.csv") %>%
+  st_as_sf(., crs = "EPSG:61416405", coords = 
+    c("LON", "LAT")) 
+# %>% st_set_crs("EPSG:61416405") |>    ?
+    # st_transform(4141) 
+
+paParks <- st_read("data/Pennsylvania_State_Park_Boundaries/Pennsylvania_State_Park_Boundaries.shp")
+
+
+# global_water <- st_read("data/globalWater/goas_v01.shp") # not working
+```
+
+```{r other_data}
+# # wlaRoads <- st_read('data/w_LA_roads.geojson')
+# # laTrails <- st_read('data/LA_pedestrianLines.geojson')
+# osm4 <- opq(bbox = "caddo parish") %>%
+#   add_osm_feature(key = "highway") %>%
+#   osmdata_sf()
+# 
+# 
+# la <- 
+#   get_acs(geography = "county", 
+#           variables = c("B25026_001E",
+#                         "B02001_002E",
+#                         "B19013_001E",
+#                         "B25058_001E",
+#                         "B06012_002E"
+#                         ), 
+#           year=2020, state="LA", 
+#           geometry=TRUE, output="wide") %>%
+#   st_transform('EPSG:2027') %>%
+#   rename(TotalPop = B25026_001E,
+#          Whites = B02001_002E,
+#          MedHHInc = B19013_001E,
+#          MedRent = B25058_001E,
+#          TotalPoverty = B06012_002E
+#          ) %>%
+#   dplyr::select(-NAME) %>%
+#   mutate(pctWhites = ifelse(TotalPop > 0, Whites / TotalPop,0),
+#          pctPoverty = ifelse(TotalPop > 0, TotalPoverty / TotalPop, 0),
+#          # pctVacant = ifelse(TotalHHs > 0, VacantHHs / TotalHHs, 0),
+#          # avgHHsizes = ifelse(TotalHHs > 0, TotalPop / TotalHHs, 0),
+#          year = "2020") %>%
+#   dplyr::select(-Whites, -TotalPoverty, -(ends_with("E")),-(ends_with("M"))) 
+# 
+# # trail_to_users <- st_join(laTrails,la,intersection=st_within)
+# # 
+# # trail_to_users <- trail_to_users %>% group_by(GEOID) %>% summarize(trail_len = sum(length)) %>% mutate(walker_ratio = TotalPop/trail_len)
+# 
+# road_to_users <- st_join(osm4$osm_lines %>% st_transform(st_crs(la)),la,join=st_within)
+# 
+# road_to_users <- road_to_users %>% group_by(GEOID,TotalPop) %>% tally() %>% mutate(driver_ratio = TotalPop/n)
+```
 
 # 1	Points	A map with points
 
@@ -61,17 +153,23 @@ cont_us_area <- us_area %>%
 earthquakes_23 <- st_read("data/2023_US_earthquakes.json") %>% st_transform(st_crs(us_area))
 
 inBoundsEQ <- st_join(earthquakes_23, cont_us_area, join=st_within)[cont_us_area,]
+# stateEQ <- st_join(cont_us_area, earthquakes_23,join=st_contains)#[earthquakes_23,]
+stateEQ <- st_join(cont_us_area,st_as_sf(over(as_Spatial(cont_us_area),as_Spatial(earthquakes_23))),join=st_contains)
 # ensure only points in continental us
 
 # View(inBoundsEQ %>% group_by(NAME))
 test <- inBoundsEQ %>% group_by(NAME) %>% summarize(stateMaxMag = max(mag),
                                                     stateMinMag = min(mag))
+# test2 <- stateEQ %>% group_by(NAME) %>% tally %>% rename(eqCount = n)
 
 inBoundsEQ <- st_join(x=inBoundsEQ,y=test)
+# stateEQ <- st_join(x=stateEQ,y=test2)
 inBoundsEQ <- inBoundsEQ %>% mutate(stateMax =ifelse(mag==stateMaxMag,1,0),
                                  stateMin = ifelse(mag==stateMinMag,1,0),
                                  tooltip = paste(paste("Maximum",NAME.x,"Magnitude"), mag, sep = ": "),
                                  color = ifelse(mag==max(inBoundsEQ$mag),RED2,RED1))
+
+states= st_join(cont_us_area,inBoundsEQ %>% group_by(NAME.x) %>% tally())
 # magMax <- max(inBoundsEQ$mag)
 ```
 
@@ -82,6 +180,136 @@ pointMap <- ggplot()+
   # annotation_map_tile(type="loviniacycle",data=cont_us_area)+ # adds annotation, but lose projection without data
   # ggmap(get_map(maptype = 'terrain-background', source = 'stamen')) # needs api key
   geom_sf(data = cont_us_area, fill = "lightgrey",col = "white")+
+  geom_sf(data = inBoundsEQ[inBoundsEQ$stateMin==0 & inBoundsEQ$stateMax==0,],
+          color=GRAY7)+
+  # geom_sf(data = inBoundsEQ[inBoundsEQ$stateMin==1,],
+  #         color="yellow")+
+  geom_sf_interactive(data = inBoundsEQ[inBoundsEQ$stateMax==1,],
+                      color=RED1,
+                      aes(tooltip = tooltip))+
+  geom_sf_interactive(data = inBoundsEQ[inBoundsEQ$mag==max(inBoundsEQ$mag),],
+                      color="#FA5128",
+                      aes(tooltip = tooltip))+
+  # geom_sf_text(data = inBoundsEQ[inBoundsEQ$mag==max(inBoundsEQ$mag),], # or just the absolute max: inBoundsEQ$mag==max(inBoundsEQ$mag); originally all maxes: inBoundsEQ[inBoundsEQ$stateMax==1,]
+  #              aes(label = mag, face = "bold"),
+  #              color = RED1, vjust = -1.5, hjust = -1)+
+  labs(caption = "Source | USGS Earthquakes Catalog\nTimothy Oliver",
+       title = "2023 - Year of Minor Intensity Earthquakes",
+       subtitle= "<span style='font-size:11pt'>Highest Recorded at
+       <span style='color:#FA5128;'>5.48</span> in 
+       <span style='color:#FA5128;'>California</span>")+
+  theme_test()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA),
+        # allows html in labs
+        plot.subtitle = element_markdown(lineheight = 1.1,hjust = 0)
+        )
+
+girafe(ggobj = pointMap) %>%
+  girafe_options(opts_hover(css = "fill:cyan;"), 
+                 opts_zoom(max = 10))
+
+## idea: highest and lowest magnitude earthquakes by state
+
+ggsave(filename="maps/StatesHighestMagnitudeEarthquakes_2023.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
+# 2	Lines	A map with lines
+
+```{r lines}
+
+q <- opq(bbox = "parque o'higgins, santiago") %>%
+    add_osm_feature(key = 'highway') %>% 
+  osmdata_sf()
+
+ggplot()+
+  geom_sf(data=q$osm_polygons)+
+  geom_sf(data=q$osm_lines)+
+  # scale_y_reverse()+
+  theme_minimal()+
+  theme(panel.grid = element_blank(),
+        axis.text= element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA))+
+  ggspatial::annotation_north_arrow(
+    location = "tr", which_north = "true",
+    pad_x = unit(0.75, "in"), pad_y = unit(3, "in"),
+    style = ggspatial::north_arrow_nautical(
+      line_col = "grey20",
+      text_family = "ArcherPro Book"
+    )
+  )+
+  labs(title="74 Hectares of Green",subtitle="Parque o'Higgins - Santiago, Chile",
+       caption = "Source | OpenStreetMaps - Overpass API")
+
+ggsave(filename="maps/02-lines.png",units="cm",width=24,height=18,dpi=150,device="png")
+
+```
+
+```{python trial, include = F, eval = F}
+# has new environment data
+print(f"trying this out\n{RED1} vs {RED2}")
+```
+
+
+# 3	Polygons	A map with polygons
+
+
+# 4	A bad map	Let's get this over with
+```{r bad_Alaska}
+orig <- cbind(150.167,65.833) %>% cbind( ., 1:nrow(.) )
+dest <- cbind(180.167,65.833) %>% cbind( ., 1:nrow(.) )
+# order by id in case you have more than two points
+m <- rbind(orig,dest) %>% .[order(.[,3]),]
+
+# make lines
+sfc <- sfheaders::sfc_linestring(
+  obj = m, linestring_id = 3)
+
+
+# center of Bering strait Land Bridge
+# 65°50′N 164°10′W
+
+ggplot()+
+  geom_sf(data=us_area%>%filter(NAME!="Puerto Rico"&NAME!="Hawaii")%>%st_transform(crs=2964))+
+  # geom_sf(data=canada%>%st_transform(crs=2964))+
+  geom_sf(data=sfc%>%st_set_crs(4326)%>%st_transform(crs=2964),color=GRAY6)+
+  theme(panel.grid = element_blank(),
+        axis.text= element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA))+
+  labs(title="Route to the Americas - The Bering Strait",subtitle="A Beginning")
+  
+  
+ggsave(filename="maps/04-badMap.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
+# 5	Analog Map	Non-digital maps
+
+# 6	Asia	Largest of the continents
+
+# 7	Navigation	A map that helps you to navigate
+
+```{r boardwalk_data}
+boardwalks <- st_read("data/Boardwalk/geo_export_b0a28836-8305-48bf-aae6-54f6ed86af65.shp") %>% st_transform(st_crs(cont_us_area))
+
+ggplot()+
+  geom_sf(data = cont_us_area[cont_us_area$NAME == "New Jersey",])+
+  geom_sf(data = boardwalks, color = "blue", linewidth=0.75)
+```
+
+```{r navigation}
+navMap <- ggplot()+
+  geom_sf(data = PA, fill = "lightgrey",col = "white")+
   geom_sf(data = inBoundsEQ[inBoundsEQ$stateMin==0 & inBoundsEQ$stateMax==0,],
           color=GRAY7)+
   # geom_sf(data = inBoundsEQ[inBoundsEQ$stateMin==1,],
@@ -114,35 +342,43 @@ pointMap <- ggplot()+
         plot.subtitle = element_markdown(lineheight = 1.1,hjust = 0)
         )
 
-girafe(ggobj = pointMap) %>%
-  girafe_options(opts_hover(css = "fill:cyan;"), 
-                 opts_zoom(max = 10))
-
-## idea: highest and lowest magnitude earthquakes by state
-
-ggsave(filename="maps/StatesHighestMagnitudeEarthquakes_2023.png",units="cm",width=24,height=18,dpi=150,device="png")
+ggsave(filename="maps/7-navigation.png",units="cm",width=24,height=18,dpi=150,device="png")
 ```
 
-# 2	Lines	A map with lines
-
-```{r lines}
-
-```
-
-
-# 3	Polygons	A map with polygons
-
-# 4	A bad map	Let's get this over with
-
-# 5	Analog Map	Non-digital maps
-
-# 6	Asia	Largest of the continents
-
-# 7	Navigation	A map that helps you to navigate
 
 # 8	Africa	Second-largest and second-most populous continent
 
 # 9	Hexagons	6 sides, 6 angles, and 6 vertices
+
+Checkout [Andrew Wheeler's](https://andrewpwheeler.com/2019/08/07/making-a-hexbin-map-in-ggplot/) quick write-up about making a hex-bin map completely in R.
+
+```{r hex} 
+# Functions and such from Andrew Wheeler
+height = 750
+lev_cnt <- seq(0,225,25)
+
+wd_hex <- function(height){
+  tri_side <- height/2
+  sma_side <- height/4
+  width <- 2*sqrt(tri_side^2 - sma_side^2)
+  return(width)
+}
+
+hex_dim <- function(area){
+  num <- 4*area
+  den <- 6*sqrt(3)
+  vert <- 2*sqrt(num/den)
+  horz <- wd_hex(height)
+  return(c(vert,horz))
+}
+
+my_dims <- hex_dim(1000^2)   #making it a square kilometer
+
+ggplot()+
+  geom_hex(data=inBoundsEQ, color='white', alpha=0.85, size=0.1, binwidth=my_dims, 
+                        aes(x=830000,y=72300,fill=cut(..count..,lev_cnt))) + 
+               scale_fill_brewer(name="Count Earthquakes", palette="OrRd")
+```
 
 # 10	North America	Northern part of the American continent
 
@@ -152,31 +388,369 @@ ggsave(filename="maps/StatesHighestMagnitudeEarthquakes_2023.png",units="cm",wid
 
 # 13	Choropleth	Classic thematic map: a choropleth
 
+```{r gitAPI, include=T,echo=T,results='hide'}
+us_area <- get_decennial(
+  geography = "state",
+  year = 2010,
+  variables = "P001001",
+  geometry = T) %>% st_transform("EPSG:3665") %>%
+  filter(NAME != "Puerto Rico")
+
+# cont_us_area <- us_area %>%
+#   filter(NAME != "Alaska" & NAME != "Hawaii" & NAME != "Puerto Rico")
+
+stateUsers = c()
+
+## Get the state names and place results of the following in a dataframe for reference
+### divide total count by population and make grad-symbol map or similar plot/map 
+#### Puerto Rico has space, so we won't use it (also territory)
+
+# uses month to cut day, change if not November
+currentTime = paste("Nov",strsplit(date(),"Nov ")[[1]][2])
+
+library(httr)
+for (state in us_area$NAME){
+    # prep
+  state <- tolower(gsub(" ","",state))
+  count <- fromJSON(rawToChar((GET(paste("https://api.github.com/search/users?q=location:",state,sep=""))$content)))$total_count
+  
+   # sleep to minimize chance of NULL
+  if (length(stateUsers)%%8==0){
+  Sys.sleep(10)}
+  
+   # get counts
+  if (is.null(count)){
+    stateUsers <- c(stateUsers,NA)
+  }else{
+  stateUsers <- c(stateUsers,count)
+  }
+}
+
+us_area$userCount <- stateUsers
+rm(stateUsers,count)
+us_area$userStandard <- us_area$userCount/us_area$value*100
+
+```
+
+```{r choro_map}
+ggplot(data = us_area %>% filter(NAME != "Alaska" & NAME != "Hawaii"))+
+  geom_sf(aes(fill=userStandard),color="white")+
+  scale_fill_binned()+
+  labs(title = paste("Active Github Users as of\n",currentTime))+
+  guides(fill=guide_legend(title="Percent of Population\nActively Using\nGithub"))+
+  theme_test()+theme(axis.text.x=element_blank(),axis.text.y=element_blank())
+
+ggsave(filename="maps/13-choro.png",units="cm",width=24,height=18,dpi=150,device="png")
+  
+```
+
+
 # 14	Europe	The westernmost peninsulas of Eurasia
 
 # 15	OpenStreetMap	The greatest of the datasets. Remember to give credit.
+
+```{r osm}
+osm2 <- opq(bbox = c(7.18783642,53.00393642,7.19693642,53.00953642)) %>%
+    add_osm_features(features = list("natural"= "water", "highway" = "!primary")) %>%
+  # add_osm_feature(key = "highway") %>%
+  osmdata_sf()
+
+ggplot()+
+  geom_sf(data=osm2$osm_polygons)+
+  geom_sf(data=osm2$osm_lines)+
+  # scale_y_reverse()+
+  theme_minimal()+
+  theme(panel.grid = element_blank(),
+        axis.text= element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA))+
+  ggspatial::annotation_north_arrow(
+    location = "tr", which_north = "true",
+    pad_x = unit(0.75, "in"), pad_y = unit(3, "in"),
+    style = ggspatial::north_arrow_nautical(
+      line_col = "grey20",
+      text_family = "ArcherPro Book"
+    )
+  )+
+  labs(title="The Stellar Fort Bourtange",subtitle="Star-shaped Landscape of Bourtange, Netherlands",
+       caption = "Source | OpenStreetMaps - Overpass API")
+
+
+
+ggsave(filename="maps/15-osm.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
 
 # 16	Oceania	Region made up of thousands of islands throughout the Central and South Pacific
 
 # 17	Flow	Flow of transport, people
 
+
 # 18	Atmosphere	Conditions of the atmosphere can be either weather or climate
 
 # 19	5-minute map	Spend no more than 5 minutes to prepare this map
 
+```{r 5_min}
+# us_wtr <- st_join(waterway%>%st_transform(st_crs(us_area)),us_area,intersection=st_within)
+
+tsunami<-inBoundsEQ[inBoundsEQ$tsunami==1,]
+tsunami$dist2Town<- as.numeric(str_split(inBoundsEQ$place,"km",simplify=T)[1])
+
+mD <- max(tsunami$dist2Town)
+
+ggplot()+
+  geom_sf(data=cont_us_area,fill=GRAY9,color="white")+
+  geom_sf(data=tsunami[tsunami$tsunami==0,],color=GRAY7,aes(size=dist2Town/mD))+
+  geom_sf(data=tsunami[tsunami$tsunami==1,],color="skyblue",aes(size=dist2Town/mD))+
+  theme_test()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA),
+        # allows html in labs
+        plot.subtitle = element_markdown(lineheight = 1.1,hjust = 0)
+        )+
+  labs(caption = "Source | USGS Earthquakes Catalog\nTimothy Oliver",
+       title = "<span style='font-size:11pt'>2023
+       <span style='color:#87CEEB;'>Tsunamis</span>",
+       subtitle = "Better Version in Source Code")
+
+ggsave(filename="maps/19-fiveMinutes.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
+```{r better_version}
+# us_wtr <- st_join(waterway%>%st_transform(st_crs(us_area)),us_area,intersection=st_within)
+
+tsunami<-inBoundsEQ[inBoundsEQ$tsunami==1,]
+dist2Town <- c()
+for (place in tsunami$place){
+  print(place)
+  dist <- as.numeric(str_split(place,"km",simplify=T)[1])
+  dist2Town <- c(dist2Town,dist)
+}
+tsunami$dist2Town<- dist2Town
+
+mD <- max(tsunami$dist2Town)
+
+ggplot()+
+  geom_sf(data=cont_us_area,fill=GRAY9,color="white")+
+  geom_sf(data=inBoundsEQ[inBoundsEQ$tsunami==0,],color=GRAY7,size=0.4)+
+  geom_sf(data=tsunami[tsunami$tsunami==1,],color="skyblue",aes(size=dist2Town))+
+  theme_test()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA),
+        # allows html in labs
+        plot.title = element_markdown(lineheight = 1.5,hjust = 0)
+        )+
+  labs(caption = "Source | USGS Earthquakes Catalog\nTimothy Oliver",
+       title = "<span style='font-size:11pt'>2023
+       <span style='color:#87CEEB;'>Tsunamis</span>")+
+  guides(fill=guide_legend(title="Miles to Town\nFrom Tsunami Epicenter"))
+
+ggsave(filename="maps/19-fiveMinutes+debug.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
 # 20	Outdoors	Map of mountains, trails, or something completely different
 
+```{r outdoors}
+
+ggplot()+
+  geom_sf(data=us_area%>%filter(NAME=="Pennsylvania")%>%st_transform(3362),color="white",fill=GRAY9)+
+  geom_sf(data=paParks[is.na(paParks$TYPE)==F,]%>%st_transform(3362),aes(color=TYPE),linewidth=1.4)+
+  theme_test()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA),
+        )+
+  labs(caption = "Source | PA Department of Conservation & Natural Resources",
+       title = "Pennsylvania Parks and Preserves")+
+  guides(fill=guide_legend(title="Park Type"))
+
+ggsave(filename="maps/20-outdoors.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
 # 21	Raster	Pixels, please
+```{r dead_sea}
+png(filename="maps/21-raster.png",height=960,width=1024,units="px")
+# coordinates(dead_sea) <- ~x+y
+# bubble(dead_sea, "elev", col=c("#a8f490","#06ffdb"),main="elevation (m)")
+# 
+# gridded(dead_sea) = T
+# image(dead_sea["elev"])
+# title("Distance to River (red=0)")
+# 
+# elev.idw = idw(elev~1,meuse,meuse.grid)
+# 
+# spplot(elev.idw["var1.pred"],main = "Elevation Inverse Distance Weighted Interpolations")
+library(gstat)
+data(meuse)
+coordinates(meuse) = ~x+y
+# bubble(meuse, "elev", col=c("#a8f490","#06ffdb"),main="elevation (m)")
+data(meuse.grid)
+coordinates(meuse.grid) = ~x+y
+gridded(meuse.grid) = T
+# image(meuse.grid["dist"])
+elev.idw = gstat::idw(elev~1,meuse,meuse.grid)
+lel.vgm=variogram(log(elev)~1,meuse)
+lel.fit = fit.variogram(lel.vgm,model=vgm(1,"Sph",900,1))
+lel.kriged = krige(log(elev)~1, meuse, meuse.grid, model = lel.fit)
+
+spplot(lel.kriged["var1.pred"])
+library(grid)
+grid.text("The High Points of the Meuse River Valley (m)", y=unit(0.96, "npc"))
+
+dev.off()
+
+
+```
 
 # 22	North is not always up	⬆️
+```{r north_is_left}
+q <- opq(bbox = "parque o'higgins, santiago") %>%
+    add_osm_feature(key = 'highway') %>% 
+  osmdata_sf()
+
+ggplot()+
+  geom_sf(data=q$osm_polygons)+
+  geom_sf(data=q$osm_lines)+
+  # scale_y_reverse()+
+  theme_minimal()+
+  theme(panel.grid = element_blank(),
+        axis.text= element_blank())+
+  ggspatial::annotation_north_arrow(
+    location = "tr", which_north = "true",
+    pad_x = unit(0.25, "in"), pad_y = unit(0, "in"),
+    style = ggspatial::north_arrow_nautical(
+      fill = c("grey40", "white"),
+      line_col = "grey20",
+      text_family = "ArcherPro Book"
+    )
+  )+
+  labs(title="Anywhere but North for Attractions",subtitle="Parque o'Higgins - Santiago, Chile",
+       caption = "Source | USGS Earthquakes Catalog")
+
+# ggsave(filename="maps/22-notUp.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
 
 # 23	3D	The third dimension
 
+```{r some_shade}
+png(filename="maps/23-3d.png",height=960,width=1024,units="px")
+mf_shadow(cont_us_area)
+mf_map(cont_us_area, add = TRUE)
+# plot baseball values
+mf_map(
+  x = st_as_sf(inBoundsEQ),
+  var = "mag",
+  type = "grad",
+  inches = 0.00034,
+  alpha = 0.3,
+  leg_pos = "bottomright2",
+  leg_title = "Earthquake Magnitude"
+)
+# layout
+mf_layout(
+  title = "2023 Earthquakes",
+  credits = paste0(
+    "Sources: USGS Earthquake Catalog\n",
+    "mapsf ",
+    packageVersion("mapsf")
+  )
+)
+
+dev.off()
+
+# ggsave(filename="maps/23-3d.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
+
 # 24	Black & white	Only two colors allowed
+
+```{r black_and_white}
+osm3 <- opq(bbox = "central park") %>%
+    # add_osm_feature(key = "natural") %>% 
+  add_osm_feature(key = "highway") %>%
+  osmdata_sf() 
+
+ggplot()+
+  geom_sf(data=osm3$osm_polygons%>% st_transform(crs="EPSG:2260"))+
+  geom_sf(data=osm3$osm_lines%>% st_transform(crs="EPSG:2260"))+
+  # scale_y_reverse()+
+  theme_minimal()+
+  theme(panel.grid = element_blank(),
+        axis.text= element_blank())+
+  ggspatial::annotation_north_arrow(
+    location = "tr", which_north = "true",
+    pad_x = unit(0.75, "in"), pad_y = unit(3, "in"),
+    style = ggspatial::north_arrow_nautical(
+      line_col = "grey20",
+      text_family = "ArcherPro Book"
+    )
+  )+
+  labs(title="The Island in the Grid",subtitle="Central Park, NY",
+       caption = "Source | OpenStreetMaps - Overpass API")
+
+
+
+ggsave(filename="maps/24-black_and_white.png",units="cm",width=24,height=18,dpi=150,device="png")
+```
 
 # 25	Antarctica	A cold continent that can't be reached with Web Mercator
 
 # 26	Minimal	Less is more
+```{r minimal_road_density}
+
+
+
+ggplot()+
+  geom_sf(data = cont_us_area, fill = "lightblue",col = "white")+
+  geom_sf(data = states[states$n == 1,],
+          fill="pink",color="white")+
+  geom_sf(data = states[states$n > 1,],
+          fill="#FF4738",color="white")+
+  # geom_sf(data=inBoundsEQ,color=GRAY9,size=0.2)+
+  labs(caption = "Note: earthquakes of magnitude 2.5 or greater shown\n\nSource | USGS Earthquakes Catalog\nTimothy Oliver",
+       title= "<span style='font-size:11pt'>Earthquake
+       <span style='color:#ADD8E6;'>Free</span> to Earthquake
+       <span style='color:#FF4738;'>Filled</span> States")+
+  theme_test()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        # axis.ticks.x = element_blank(),
+        # axis.ticks.y = element_blank(),
+        panel.background = element_rect(
+        fill = "#fcfcf4",
+        colour = NA),
+        # allows html in labs
+        plot.title = element_markdown(lineheight = 2.5,hjust = 0)
+        )
+
+
+
+
+ggsave(filename="maps/26-minimal.png",units="cm",width=24,height=18,dpi=150,device="png")
+
+
+```
 
 # 27	Dot	Dot density, a single dot in space or something different
 
@@ -185,6 +759,48 @@ ggsave(filename="maps/StatesHighestMagnitudeEarthquakes_2023.png",units="cm",wid
 # 29	Population	A classic theme for a map
 
 # 30	"My favorite.."	You choose!
+
+
+
+```{r tsunami_eq_CA,cache=T}
+CA <- us_area%>%filter(NAME=="California")
+buf <-st_buffer(st_centroid(CA),dist=15600)
+# cfEQ <- st_join(earthquakes_23,
+#         buf,
+#         join=st_within) 
+# 
+# nrow(cfEQ)
+# nrow(earthquakes_23)
+
+```
+
+```{r map_simple_data}
+ggplot()+
+  geom_sf(data=ocean,fill=GRAY9,color="white")+
+  geom_sf(data=birds,color='pink')
+
+ggplot()+
+  geom_sf(data=CA%>%st_transform("EPSG:3665"))+
+  geom_sf(data=buf,color='black',fill='lightblue')
+
+ggplot()+
+  geom_sf(data=q$osm_polygons)+
+  geom_sf(data=q$osm_lines)+
+  # scale_y_reverse()+
+  theme_minimal()+
+  theme(panel.grid = element_blank(),
+        axis.text= element_blank())+
+  ggspatial::annotation_north_arrow(
+    location = "tr", which_north = "true",
+    pad_x = unit(0.25, "in"), pad_y = unit(0, "in"),
+    style = ggspatial::north_arrow_nautical(
+      fill = c("grey40", "white"),
+      line_col = "grey20",
+      text_family = "ArcherPro Book"
+    )
+  )
+  
+```
 
 ```{r knit_etc., eval=F, include=F}
 rmarkdown::render(input="all_maps.Rmd",output_format = "html_document",output_file = "The Thirty-Day Mapping Journey.html")
